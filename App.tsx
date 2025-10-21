@@ -7,6 +7,65 @@ import { getValidMoves, isKingInCheck, isCheckmate, isStalemate } from './servic
 // Helper to check for position equality
 const posEquals = (a: Position | null, b: Position | null) => a && b && a.row === b.row && a.col === b.col;
 
+const ANIMATION_DURATION = 300; // ms
+
+// AnimatedPiece Component for movement
+const AnimatedPiece: React.FC<{ piece: Piece; from: Position; to: Position }> = ({ piece, from, to }) => {
+    const [style, setStyle] = useState<React.CSSProperties>({
+        top: `${from.row * 12.5}%`,
+        left: `${from.col * 12.5}%`,
+        zIndex: 10,
+    });
+
+    useEffect(() => {
+        // Delay to ensure the initial state is rendered before transitioning
+        requestAnimationFrame(() => {
+            setStyle({
+                top: `${to.row * 12.5}%`,
+                left: `${to.col * 12.5}%`,
+                transition: `top ${ANIMATION_DURATION}ms ease-in-out, left ${ANIMATION_DURATION}ms ease-in-out`,
+                zIndex: 10,
+            });
+        });
+    }, [to]);
+
+    return (
+        <div className="absolute w-[12.5%] h-[12.5%]" style={style}>
+            {PIECE_COMPONENTS[piece.color][piece.type]}
+        </div>
+    );
+};
+
+// CapturedPiece Component for capture animation
+const CapturedPiece: React.FC<{ piece: Piece; at: Position }> = ({ piece, at }) => {
+    const [style, setStyle] = useState<React.CSSProperties>({
+        top: `${at.row * 12.5}%`,
+        left: `${at.col * 12.5}%`,
+        transform: 'scale(1)',
+        opacity: 1,
+        zIndex: 5,
+    });
+
+    useEffect(() => {
+        requestAnimationFrame(() => {
+            setStyle({
+                top: `${at.row * 12.5}%`,
+                left: `${at.col * 12.5}%`,
+                transform: 'scale(0.5)',
+                opacity: 0,
+                transition: `all ${ANIMATION_DURATION}ms ease-in-out`,
+                zIndex: 5,
+            });
+        });
+    }, [at]);
+    
+    return (
+        <div className="absolute w-[12.5%] h-[12.5%]" style={style}>
+            {PIECE_COMPONENTS[piece.color][piece.type]}
+        </div>
+    );
+};
+
 // Square Component
 interface SquareProps {
   piece: Piece | null;
@@ -49,6 +108,13 @@ const App: React.FC = () => {
   const [kingInCheckPos, setKingInCheckPos] = useState<Position | null>(null);
   const [promotionPos, setPromotionPos] = useState<Position | null>(null);
   const [capturedPieces, setCapturedPieces] = useState<{[key in PlayerColor]: Piece[]}>({ WHITE: [], BLACK: [] });
+  
+  interface AnimationDetails {
+    moving: { piece: Piece; from: Position; to: Position; };
+    captured?: { piece: Piece; at: Position; };
+  }
+  const [animationDetails, setAnimationDetails] = useState<AnimationDetails | null>(null);
+  const isAnimating = !!animationDetails;
 
 
   const updateGameStatus = useCallback((currentBoard: BoardState, player: PlayerColor) => {
@@ -76,53 +142,60 @@ const App: React.FC = () => {
   }, []);
   
   const handleSquareClick = (position: Position) => {
-    if (gameState === GameState.CHECKMATE || gameState === GameState.STALEMATE || gameState === GameState.PROMOTION) return;
+    if (isAnimating || gameState === GameState.CHECKMATE || gameState === GameState.STALEMATE || gameState === GameState.PROMOTION) return;
     
     const clickedPiece = board[position.row][position.col];
 
     if (selectedPiece) {
-      // Is it a valid move?
       if (validMoves.some(move => posEquals(move, position))) {
-        const newBoard = JSON.parse(JSON.stringify(board));
-        const pieceToMove = newBoard[selectedPiece.row][selectedPiece.col];
+        const pieceToMove = board[selectedPiece.row][selectedPiece.col]!;
+        const capturedPiece = board[position.row][position.col];
+        const fromPos = { ...selectedPiece };
 
-        // Capture piece
-        const captured = newBoard[position.row][position.col];
-        if(captured) {
-            const newCaptured = {...capturedPieces};
-            newCaptured[captured.color].push(captured);
-            setCapturedPieces(newCaptured);
-        }
-
-        newBoard[position.row][position.col] = pieceToMove;
-        newBoard[selectedPiece.row][selectedPiece.col] = null;
-        
-        // Pawn Promotion
-        if (pieceToMove.type === PieceType.PAWN && (position.row === 0 || position.row === 7)) {
-            setPromotionPos(position);
-            setGameState(GameState.PROMOTION);
-            setBoard(newBoard);
-            return;
-        }
-
-        setBoard(newBoard);
-        const nextPlayer = currentPlayer === PlayerColor.WHITE ? PlayerColor.BLACK : PlayerColor.WHITE;
-        setCurrentPlayer(nextPlayer);
         setSelectedPiece(null);
         setValidMoves([]);
-        updateGameStatus(newBoard, currentPlayer);
+        
+        setAnimationDetails({
+            moving: { piece: pieceToMove, from: fromPos, to: position },
+            captured: capturedPiece ? { piece: capturedPiece, at: position } : undefined
+        });
+
+        setTimeout(() => {
+            const newBoard = JSON.parse(JSON.stringify(board));
+
+            const captured = newBoard[position.row][position.col];
+            if(captured) {
+                const newCaptured = {...capturedPieces};
+                newCaptured[captured.color].push(captured);
+                setCapturedPieces(newCaptured);
+            }
+
+            newBoard[position.row][position.col] = pieceToMove;
+            newBoard[fromPos.row][fromPos.col] = null;
+            
+            if (pieceToMove.type === PieceType.PAWN && (position.row === 0 || position.row === 7)) {
+                setPromotionPos(position);
+                setGameState(GameState.PROMOTION);
+                setBoard(newBoard);
+                setAnimationDetails(null);
+                return;
+            }
+
+            setBoard(newBoard);
+            const nextPlayer = currentPlayer === PlayerColor.WHITE ? PlayerColor.BLACK : PlayerColor.WHITE;
+            setCurrentPlayer(nextPlayer);
+            updateGameStatus(newBoard, currentPlayer);
+            setAnimationDetails(null);
+        }, ANIMATION_DURATION);
 
       } else if (clickedPiece && clickedPiece.color === currentPlayer) {
-        // Select another of your own pieces
         setSelectedPiece(position);
         setValidMoves(getValidMoves(position, board));
       } else {
-        // Deselect
         setSelectedPiece(null);
         setValidMoves([]);
       }
     } else if (clickedPiece && clickedPiece.color === currentPlayer) {
-      // Select a piece
       setSelectedPiece(position);
       setValidMoves(getValidMoves(position, board));
     }
@@ -153,6 +226,7 @@ const App: React.FC = () => {
     setKingInCheckPos(null);
     setPromotionPos(null);
     setCapturedPieces({ WHITE: [], BLACK: [] });
+    setAnimationDetails(null);
   };
 
   const statusMessage = useMemo(() => {
@@ -184,13 +258,11 @@ const App: React.FC = () => {
     <div className="min-h-screen flex flex-col items-center justify-center p-4 font-sans text-white">
       <div className="flex flex-col lg:flex-row gap-8 items-center">
       
-        {/* Left Side (Captured by White) */}
         <div className="w-full lg:w-48 order-2 lg:order-1">
             <h3 className="text-lg font-bold mb-2 text-center text-neutral-300">Captured by White</h3>
             {renderCapturedPieces(PlayerColor.BLACK)}
         </div>
 
-        {/* Board and Game Info */}
         <div className="flex flex-col items-center order-1 lg:order-2">
             <div className="mb-4 text-center">
               <h1 className="text-4xl font-bold mb-2">React Chess</h1>
@@ -198,15 +270,34 @@ const App: React.FC = () => {
             </div>
             
             <div className="w-[90vw] h-[90vw] md:w-[70vh] md:h-[70vh] max-w-[800px] max-h-[800px] shadow-2xl rounded-lg overflow-hidden relative">
+                {animationDetails?.moving && (
+                    <AnimatedPiece
+                        piece={animationDetails.moving.piece}
+                        from={animationDetails.moving.from}
+                        to={animationDetails.moving.to}
+                    />
+                )}
+                {animationDetails?.captured && (
+                    <CapturedPiece
+                        piece={animationDetails.captured.piece}
+                        at={animationDetails.captured.at}
+                    />
+                )}
                 <div className="grid grid-cols-8 grid-rows-8 w-full h-full">
-                    {board.flat().map((piece, index) => {
+                    {board.flat().map((p, index) => {
                       const row = Math.floor(index / 8);
                       const col = index % 8;
                       const position = { row, col };
+
+                      const isPieceMoving = animationDetails && posEquals(animationDetails.moving.from, position);
+                      const isPieceCaptured = animationDetails?.captured && posEquals(animationDetails.captured.at, position);
+                      
+                      const pieceOnSquare = isPieceMoving || isPieceCaptured ? null : p;
+
                       return (
                         <Square
                           key={index}
-                          piece={piece}
+                          piece={pieceOnSquare}
                           position={position}
                           isSelected={posEquals(selectedPiece, position)}
                           isPossibleMove={validMoves.some(move => posEquals(move, position))}
@@ -244,7 +335,6 @@ const App: React.FC = () => {
             </button>
         </div>
         
-        {/* Right Side (Captured by Black) */}
         <div className="w-full lg:w-48 order-3 lg:order-3">
              <h3 className="text-lg font-bold mb-2 text-center text-neutral-300">Captured by Black</h3>
             {renderCapturedPieces(PlayerColor.WHITE)}
