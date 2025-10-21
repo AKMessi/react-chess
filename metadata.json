@@ -1,0 +1,5 @@
+{
+  "name": "React Chess (tried Gemini vibecoding app)",
+  "description": "A fully functional local co-op chess game built with React, TypeScript, and Tailwind CSS. Features include move validation, check/checkmate detection, and pawn promotion.",
+  "requestFramePermissions": []
+}
